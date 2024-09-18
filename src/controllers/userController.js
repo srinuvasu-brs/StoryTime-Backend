@@ -4,8 +4,19 @@ import jwt from "jsonwebtoken";
 import {
   sendEmailVerificationLink,
   sendPasswordResetLink,
+  sendVerificationCode,
+  sendPasswordResetVerificationCode,
 } from "../utils/utils.js";
 import SpotifyWebApi from "spotify-web-api-node";
+
+// To check user agent info
+const getDevice = (req, res) => {
+  console.log(`User-Agent Source: ${req.useragent.source}`);
+  console.log(`Is Mobile: ${!req.useragent.isMobile}`);
+  console.log(`Is Desktop: ${req.useragent.isDesktop}`);
+  console.log(`Is Bot: ${req.useragent.isBot}`);
+  res.send(req.useragent.source);
+};
 
 // create a new user
 const createUser = async (req, res, next) => {
@@ -27,7 +38,7 @@ const createUser = async (req, res, next) => {
       return next(err);
     }
 
-    // check for existing user
+    // check for existing user''
     const userExists = await User.findOne({ email });
     if (userExists) {
       res.status(400);
@@ -46,17 +57,54 @@ const createUser = async (req, res, next) => {
       expiresIn: "2h",
     });
 
-    try {
-      const verificationEmailResponse = await sendEmailVerificationLink(
+    if (req.useragent.isMobile) {
+      try {
+        const verificationEmailResponse = await sendEmailVerificationLink(
+          email,
+          token,
+          first_name
+        );
+
+        // send mail - handle err
+        if (verificationEmailResponse.error) {
+          const err = new Error(
+            "Failed to send verification email, please try again later"
+          );
+          err.statusCode = 500;
+          return next(err);
+        }
+
+        // save to DB
+        const user = await User.create({
+          first_name,
+          last_name,
+          email,
+          password: hashedPassword,
+          verify_token: token,
+          verify_token_expires: Date.now() + 7200000,
+        });
+        // send mail success
+        res.status(201).json({
+          message:
+            "Registered successfully. Please check your mail to verify the account",
+        });
+      } catch (error) {
+        return next(error);
+      }
+    } else {
+      const generatedCode = Math.floor(1000 + Math.random() * 9000);
+
+      const verificationEmailResponse = await sendVerificationCode(
+        first_name,
         email,
-        token,
-        first_name
+        generatedCode
       );
 
       // send mail - handle err
       if (verificationEmailResponse.error) {
+        console.log(verificationEmailResponse.error);
         const err = new Error(
-          "Failed to send verification email, please try again later"
+          "Failed to send verification code, please try again later"
         );
         err.statusCode = 500;
         return next(err);
@@ -68,16 +116,14 @@ const createUser = async (req, res, next) => {
         last_name,
         email,
         password: hashedPassword,
-        verify_token: token,
-        verify_token_expires: Date.now() + 7200000,
+        otp: generatedCode,
+        otp_expires_in: Date.now() + 7200000,
       });
       // send mail success
       res.status(201).json({
         message:
           "Registered successfully. Please check your mail to verify the account",
       });
-    } catch (error) {
-      return next(error);
     }
 
     // res.status(201).send("User registered successfully");
@@ -112,6 +158,144 @@ const verifyEmail = async (req, res, next) => {
       await user.save();
       return res.status(201).json("Email is verified. Please Login.");
     }
+  } catch (error) {
+    return next(error);
+  }
+};
+
+// resend otp
+const resendVerificationCode = async (req, res, next) => {
+  const { email } = req.body;
+  const generatedCode = Math.floor(1000 + Math.random() * 9000);
+
+  // check for user
+  const user = await User.findOne({ email });
+  if (user) {
+    const verificationEmailResponse = await sendVerificationCode(
+      user.first_name,
+      user.email,
+      generatedCode
+    );
+
+    // send mail - handle err
+    if (verificationEmailResponse.error) {
+      console.log(verificationEmailResponse.error);
+      const err = new Error(
+        "Failed to send verification code, please try again later"
+      );
+      err.statusCode = 500;
+      return next(err);
+    }
+
+    (user.otp = generatedCode), (user.otp_expires_in = Date.now() + 7200000);
+    await user.save();
+    return res.status(200).json({
+      message: "Verification code resent successfully. Please verify",
+    });
+  }
+  res.status(404);
+  const err = new Error("User not found. Please register");
+  err.statusCode = 404;
+  return next(err);
+};
+
+// resend otp
+const sendPasswordVerificationCode = async (req, res, next) => {
+  const { email } = req.body;
+  const generatedCode = Math.floor(1000 + Math.random() * 9000);
+
+  // check for user
+  const user = await User.findOne({ email });
+  if (user) {
+    const verificationEmailResponse = await sendPasswordResetVerificationCode(
+      user.first_name,
+      user.email,
+      generatedCode
+    );
+
+    // send mail - handle err
+    if (verificationEmailResponse.error) {
+      console.log(verificationEmailResponse.error);
+      const err = new Error(
+        "Failed to send password reset verification code, please try again later"
+      );
+      err.statusCode = 500;
+      return next(err);
+    }
+
+    (user.reset_password_otp = generatedCode),
+      (user.reset_password_otp_expires_in = Date.now() + 7200000);
+    await user.save();
+    return res.status(200).json({
+      message: "Password reset verification code sent successfully.",
+    });
+  }
+  res.status(404);
+  const err = new Error("User not found. Please register");
+  err.statusCode = 404;
+  return next(err);
+};
+
+// to verify the code for - new user registration from mobile
+const verifyCode = async (req, res, next) => {
+  const { email, verificationcode } = req.body;
+  console.log(email, verificationcode);
+  try {
+    const user = await User.findOne({ email, otp: verificationcode });
+    if (!user) {
+      // If user not found
+      return res.status(409).json({ message: "Invalid verification code." });
+    }
+    if (user.verified) {
+      return res
+        .status(200)
+        .json({ message: "Email is already verified. Please Login." });
+    } else {
+      user.verified = true;
+      await user.save();
+      return res
+        .status(201)
+        .json({ message: "Email is verified. Please Login." });
+    }
+  } catch (error) {
+    return next(error);
+  }
+};
+
+// reset password from mobile
+const resetPasswordFromMobile = async (req, res, next) => {
+  const { verificationcode, password } = req.body;
+  if (!verificationcode) {
+    const err = new Error("Verification code is required");
+    err.statusCode = 400;
+    return next(err);
+  }
+  if (!password) {
+    const err = new Error("Password is required");
+    err.statusCode = 400;
+    return next(err);
+  }
+  try {
+    // find the user by token
+    const user = await User.findOne({
+      reset_password_otp: verificationcode,
+      reset_password_otp_expires_in: { $gt: Date.now() },
+    });
+    if (!user) {
+      const err = new Error(
+        "Verification code is invalid or expired, please try again"
+      );
+      err.statusCode = 400;
+      return next(err);
+    }
+    // user found - hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    (user.password = hashedPassword), (user.reset_password_otp = undefined);
+    user.reset_password_otp_expires_in = undefined;
+    await user.save();
+    res.status(200).json({
+      message: "Password updated successfully, please login to continue",
+    });
   } catch (error) {
     return next(error);
   }
@@ -473,4 +657,9 @@ export {
   saveSpotifyStory,
   removeSpotifyStory,
   getSpotifyStories,
+  getDevice,
+  resendVerificationCode,
+  verifyCode,
+  sendPasswordVerificationCode,
+  resetPasswordFromMobile,
 };

@@ -61,4 +61,48 @@ const sendPasswordResetLink = async (email, token, name) => {
   }
 };
 
-export { sendEmailVerificationLink, sendPasswordResetLink };
+// Mobile
+// send verification code through mail
+const sendVerificationCode = async (name, email, otp) => {
+  try {
+    const renderedContent = await ejs.renderFile(
+      `${currentDirectory}/../templates/otp.ejs`,
+      { name, otp }
+    );
+
+    const mailOptions = {
+      from: "srinumsc4551@gmail.com",
+      to: email,
+      subject: "Storytime - Email Confirmation",
+      html: renderedContent,
+    };
+
+    const verificationInfo = await mail.sendMail(mailOptions);
+    return verificationInfo;
+  } catch (error) {
+    return { error };
+  }
+};
+
+const sendPasswordResetVerificationCode = async (name, email, otp) => {
+  try {
+    const renderedContent = await ejs.renderFile(
+      `${currentDirectory}/../templates/reset_password_code.ejs`,
+      { name, otp }
+    );
+
+    const mailOptions = {
+      from: "srinumsc4551@gmail.com",
+      to: email,
+      subject: "Storytime - Password reset code",
+      html: renderedContent,
+    };
+
+    const verificationInfo = await mail.sendMail(mailOptions);
+    return verificationInfo;
+  } catch (error) {
+    return { error };
+  }
+};
+
+export { sendEmailVerificationLink, sendPasswordResetLink, sendVerificationCode, sendPasswordResetVerificationCode};

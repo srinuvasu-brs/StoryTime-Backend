@@ -16,6 +16,12 @@ const userSchema = mongoose.Schema(
     reset_password_token: { type: String }, //resetPasswordToken with link from webiste
     reset_password_epxpires: Date,
     status: {type: Boolean, default : true},
+
+    // mobile
+    otp: { type: String },
+    otp_expires_in: Date,
+    reset_password_otp: { type: String },
+    reset_password_otp_expires_in: Date,
   },
   {
     timestamps: {
